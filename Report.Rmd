@@ -1,0 +1,686 @@
+---
+title: "Liberal VS Independent candidates in 2022"
+author: 'Ezhil Kriahna'
+date: "2024-04-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, results ='hide', message = FALSE )
+```
+
+### Preparation
+#### 1. Ensure to load the following packages
+
+```{r}
+library(sf)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(here)
+library(stringr)
+library(cowplot)
+```
+
+
+
+#### 2.Get geographical boundaries for 2022 census region.
+
+Go to https://www.abs.gov.au/census/find-census-data/geopackages? selet the folloing options and download all the data set and extract it in the "data/" location.
+
+  i)
+
+      * Select Census Year: 2022  
+      * Select State or territoy: New South Wales
+      * Select table ot topic:select (table)
+                G04-Age by Sex.  
+      * Select GDA Type : GDA2020.  
+
+
+  ii)
+  
+      * 2022  
+      * New South Wales
+      * select (table)
+      * G02- Selected medians and averages.  
+      * GDA2020.  
+      
+  iii)
+  
+      * 2022  
+      * New South Wales
+      * select (table)
+      * G04-Age by Sex.  
+      * GDA2020.  
+  
+  iv)
+  
+      * 2022  
+      * New South Wales
+      * select (Topic)
+      * Aboriginal and Torres Strait Islanders.  
+      * GDA2020.  
+      * download both G01 and G07.
+
+#### 3.You will also need the data for the 2022 electoral results boundaries
+
+  - To get the Boundaries  
+    - Go to https://www.aec.gov.au/electorates/gis/licence.htm to agree with the license
+    - Download the ESRI (.shp) zip file for Victoria where Federal election boundary applied in 2022.
+    - Extract it in the data folder.  
+  - 2022 Election results 
+    - Go to https://results.aec.gov.au/27966/Website/HouseDownloadsMenu-27966-Csv.htm and look for "Distribution of preferences by candidate by division" and download the .csv file or
+    - Election results by division and house  [2018 boundaries]("https://results.aec.gov.au/27966/Website/Downloads/HouseDopByDivisionDownload-27966.csv") or
+    - Just run the following data
+
+```{r}
+url = "https://results.aec.gov.au/27966/Website/Downloads/HouseDopByDivisionDownload-27966.csv"
+
+election_data <- read_csv(url,
+  skip = 1)
+```
+
+#### 4. Referendum 2023 Data
+  - go to https://results.aec.gov.au/29581/Website/ReferendumDownloadsMenu-29581-Csv.htm
+  - Select the Votes by polling place followed by the three letter code of state(StateAb) of your chosen electorate.
+  - Spoilers alert !!: In this report the chosen electorate is "Wentworth" in the state of "New south Wales"(NSW).
+
+Feel free to go thought the Metadata of each file.
+
+## Task
+> Load the data
+
+```{r}
+
+election_data <- election_data|>
+  mutate(DivisionNm = toupper(DivisionNm))
+# r studio is case sensitive. The following step will make all letters in division names capital.
+
+#importing Spatial data of election division 
+data_path = "data/AUS_ELB_region.shp" 
+election_map <- read_sf(here::here(data_path)) %>%
+  # to match up with election data and to remove z coordinate
+  mutate(DivisionNm = toupper(Elect_div), geometry = st_zm(geometry))
+
+
+```
+
+Combining both based on the Division name
+
+```{r}
+ 
+election_map_data = election_map |>
+  left_join(election_data, by = "DivisionNm")
+
+
+# in this following report you will see allot of remove function this is to clear up the space
+remove(election_data)
+remove(election_map)
+
+```
+
+
+Election Preference count and elected "yes"
+
+```{r}
+elected_data <- election_map_data |>
+
+  filter(CalculationType == "Preference Count" &
+    Elected == "Y" &
+    CountNumber == 0) 
+
+```
+this are the 10 Independent candidate's electorate 
+
+> i) Filtering the Independent candidate elected
+
+```{r, results='hold'}
+independent_candidates_elected <- elected_data|>
+  filter(PartyNm == "Independent")|>
+  select(DivisionNm)
+independent_candidates_elected$DivisionNm
+
+```
+
+> ii) Formal seats lost by Liberal to Independent candidates in 2022 election
+
+```{r, results='hold'}
+
+formerly_liberal <- election_map_data |>
+  filter(DivisionNm %in% independent_candidates_elected$DivisionNm & PartyNm == "Liberal" & HistoricElected == "Y" & CountNumber == 0 & CalculationType == "Preference Count")
+
+count(formerly_liberal)
+
+formerly_liberal$DivisionNm
+
+```
+
+  - **6 seats** were formerly liberal seats that were lost to independents in 2022.
+  
+> iii)
+
+Assumption 1: The census Australia 2021 data distribution approximately similar to the population of Australian citizens 
+
+  The chosen electorate for the further report from the independent electorates won in the 2022 election is
+  -  **"Wentworth"**
+  - It's a small suburb in NSW (note: is the country's second smallest electorate) . For more details go to [Wentworth](https://www.visitnsw.com/destinations/country-nsw/the-murray/wentworth)
+  
+Step 1 : importing and processing data
+```{r}
+# in the G04 file we have two (.gphg) 
+# here we exact those and combine in to one file for further process 
+G04A_location <- here::here("data/G04A_NSW_GDA2020.gpkg")
+G04B_location <- here::here("data/G04B_NSW_GDA2020.gpkg")
+
+#G04_layers for both A and B doc 
+(G04A_layers <- st_layers(G04A_location))
+(G04B_layers <- st_layers(G04B_location))
+
+#loading the data with layer of SA1
+G04A_data <- st_read(G04A_location,layer = "G04A_SA1_2021_NSW")
+G04B_data <- st_read(G04B_location,layer = "G04B_SA1_2021_NSW")
+dim(G04A_data)
+dim(G04B_data)
+#combining the data in A and B
+#select and match will make sure there are no duplicates in the G04 data set
+
+G04_data <- bind_cols(G04A_data,G04B_data|>select(-matches(names(G04A_data))))
+
+#Dropping z coordinate for further plotting
+G04_data$geom...311 <- st_zm(G04_data$geom...311)
+
+dim(G04_data) #have a look at the dimension of the data set
+
+remove(G04A_data)
+remove(G04B_data)
+remove(G04B_location)
+remove(G04A_location)
+remove(G04A_layers)
+remove(G04B_layers)
+
+```
+
+```{r}
+#finding the approximate center of the SA1 region
+G04_data <- G04_data |> mutate(centroid = st_centroid(geom...311))
+
+#filtering and finding the intersecting area in both data set for Wentwoth.
+electorate <- election_map_data |>filter(DivisionNm == "WENTWORTH")
+
+st_crs(electorate$geometry,4283)
+
+electorate$geometry = st_transform(electorate$geometry, 7844) 
+
+G04_data_interset <-G04_data |> filter(st_intersects(geom...311,electorate$geometry,sparse=FALSE)[,1])
+
+
+```
+Step 2: plotting the intersecting areas
+```{r, results='hold'}
+
+ggplot()+
+  geom_sf(data = G04_data_interset,aes(geometry = geom...311),alpha = 0.5, color = "blue", size = 0.1 )+
+  geom_sf(data= electorate,aes(geometry = geometry), color= "red", size = 10,fill = "transparent" )+
+  coord_sf(xlim= c(151.21,151.29),ylim=c(-33.92,-33.82))+
+  ggtitle("SA1 intersecting with Wentworth boundary")
+#coord_sf will limit and focus the area to be visualized. 
+```
+
+Step 3: find the best intersecting area
+  - This chunk of code take lot of time to process. hence, you are provided with the .rda output. feel free to change chuck option of eval to TRUE and run the code. In approximately 15 minutes, the dame output loaded in step 4 will be genrated. 
+  
+```{r, eval = FALSE }
+# this simple function will give the best area of intersection for every observation in the census data and electorate data.
+best_intersection <- function(geom...311,electorate){
+  intersection_areas <- st_intersection(geom...311,electorate$geometry)|>
+    st_area()|>as.vector()
+  best_index <- which.max(intersection_areas)
+  best_area <- intersection_areas[best_index]
+  best_geometry <- electorate$geometry[best_index]
+  
+  best_percentage <- best_area/(st_area(best_geometry))*100
+  
+  return(list(best_area = best_area,best_percentage = best_percentage))
+  
+}
+
+G04_data_interseted <- G04_data_interset|>
+  rowwise()|>mutate(area = best_intersection(geom...311,electorate)["best_area"])
+# saving output to local file for further process
+save(G04_data_interseted,file="pros data/G04_data_intersected.rda")
+```
+
+```{r}
+#remove(elected_data)
+#remove(election_map_data)
+remove(formerly_liberal)
+remove(independent_candidates_elected)
+remove(G04_data_interset)
+```
+
+Step 4:loading the new intersection data and plotting both
+
+```{r}
+load("pros data/G04_data_intersected.rda")
+```
+
+assuming that best area in SA1 boundary will intersect above 500 (map units) with chosen electorate area
+```{r}
+G04_data_interseted <- G04_data_interseted|>filter(area > 500)
+
+```
+
+```{r,results='hold'}
+
+ggplot()+
+  geom_sf(data = G04_data_interseted,aes(geometry = geom...311),alpha = 0.5, color = "blue", size = 0.1 )+
+  geom_sf(data= electorate,aes(geometry = geometry), color= "red", size = 10,fill = "transparent" )+
+  coord_sf(xlim= c(151.21,151.29),ylim=c(-33.92,-33.82))+
+  ggtitle("SA1 in Wentworth boundary")
+```
+
+Step 5: saving the intersection SA1 ID's of "wentworth" for later use.
+```{r}
+interseted_SA1_ID <- unique(select(G04_data_interseted, matches("SA1_code_")))
+
+save(interseted_SA1_ID,file="pros data/intersected_SA1_ID.rda")
+
+save(electorate,file="pros data/electorate.rda")
+
+```
+
+Step 6: Tidying the data
+```{r}
+#("^[^_]*_[^_]*_[^_]*_[^_]*$")- this will match the column that exactly have three "_" in it.
+
+Age_Gender_data <- G04_data|>select(!matches(c("SA1_NAME_2021","geom","centroid","area","Tot","^[^_]*_[^_]*_[^_]*_[^_]*$")))
+
+
+Age_Gender_data_long <- Age_Gender_data|>pivot_longer(cols= -1, names_to = "category", values_to = "count_prople")
+
+# assuming that maximum age is around 120
+Age_Gender_data_long <- Age_Gender_data_long|>
+  mutate(
+    category = str_replace(category,"yr_over","120"),
+    category = str_remove(category,"Age_yr_")
+  )
+
+Age_Gender_data_state <-  Age_Gender_data_long|>
+  separate_wider_delim(cols = category, delim = "_",
+                       names=c("age_min","age_max","gender"))|>
+  unite("age", c(age_min, age_max), remove = FALSE)
+Age_Gender_data_state$age_min <- as.numeric(Age_Gender_data_state$age_min)
+Age_Gender_data_state$age_max <- as.numeric(Age_Gender_data_state$age_max)
+
+
+remove(Age_Gender_data)
+remove(Age_Gender_data_long)
+remove(G04_data)
+remove(G04_data_interseted)
+  
+ 
+```
+ 
+ 
+ + assumtion: above the Age of 18 years are eligible to vote. however the bins are arranged in 5's hence, the assuming that the distribution is similar for both 15-19 bin size and 18-19 size.
+```{r}
+
+#based on that assumption the age_min is considered 15 instead of 18 years
+Age_Gender_data_state_voters <- Age_Gender_data_state|>filter(age_min>=15)|>filter(!(gender == "P"))
+#assuming that age distribution of the Australian citizen in NSW is approximately similar to the total population of the state of NSW. 
+
+
+
+remove(Age_Gender_data_state)
+
+```
+
+Step 7:Plotting Age and gender distribution in Wentworth and NSW.
+```{r}
+a2 <- ggplot(Age_Gender_data_state_voters,aes(x=factor(age_min), y= count_prople))+
+  geom_bar(stat = "identity",width = 1)+
+  scale_x_discrete()+
+  labs(x="Age(years)",y="Count")+
+  ggtitle("Distribution of age in NSW")
+
+```
+
+```{r}
+g2 <- ggplot(Age_Gender_data_state_voters,aes(x=factor(gender), y= count_prople))+
+  geom_bar(stat = "identity",width = 0.6)+
+  scale_x_discrete()+
+  labs(x="Gender",y="Count")+
+  ggtitle("Distribution of Gender in NSW")
+  
+```
+
+```{r}
+Age_Gender_data_electorate_voters <-
+  Age_Gender_data_state_voters|>filter(SA1_CODE_2021 %in%
+                                         interseted_SA1_ID$SA1_CODE_2021)
+
+```
+
+```{r}
+a1 <- ggplot(Age_Gender_data_electorate_voters,aes(x=factor(age_min), y= count_prople))+
+  geom_bar(stat = "identity",width = 1)+
+  scale_x_discrete()+
+  labs(x="Age(years)",y="Count")+
+  ggtitle("Distribution of age in Wentworth")
+
+```
+
+```{r}
+g1 <- ggplot(Age_Gender_data_electorate_voters,aes(x=factor(gender), y= count_prople))+
+  geom_bar(stat = "identity",width = 0.6 )+
+  scale_x_discrete()+
+  labs(x="Gender",y="Count")+
+  ggtitle("Distribution of Gender in Wentworth")
+  
+```
+
+```{r, results='hold'}
+#comparing the age graph
+plot_grid(a1,a2,ncol = 1)
+
+```
+
+### Comparing Distribution of age in Wentworth vs NSW
+  * Both the distributions are at the peak around the **age of 30 years**.
+  * however the median age of the Wentworth is slightly lesser then the state of NSW
+  * Which suggest that in Wentworth there are more medial aged people rather than the adults or old aged **voters**.
+    
+
+```{r,results='hold'}
+#comparing the gender graph
+plot_grid(g1,g2,nrow = 1)
+
+# color for different bar will enhance the visual but lot of error do it in the last.
+
+```
+
+### Comparing Distribution of Gender in Wentworth vs NSW
+    * F- Female, M-Male
+    * It evedient in Both the case **female voters** count is higher that the male.
+  
+
+Step 8: following the same steps to compare personal weekly income in "Wentworth" and NSW
+```{r}
+
+G02_location <- here::here("data/G02_NSW_GDA2020.gpkg")
+
+(G02_layers <- st_layers(G02_location))
+
+G02_data <- st_read(G02_location,layer = "G02_SA1_2021_NSW")
+
+colnames(G02_data)
+
+```
+
+```{r}
+
+G02_data <- G02_data|>
+  mutate(
+    centeroid = st_centroid(geom))
+      
+
+G02_data_mid_prsnl_inc_weekly <- G02_data|>filter(!Median_tot_prsnl_inc_weekly == 0)|>select(c("SA1_CODE_2021","Median_tot_prsnl_inc_weekly","geom","centeroid"))
+
+G02_data_mid_prsnl_inc_weekly_electorate <- G02_data_mid_prsnl_inc_weekly |>
+  filter(SA1_CODE_2021 %in% interseted_SA1_ID$SA1_CODE_2021)
+
+```
+
+```{r}
+in2 <- ggplot(G02_data_mid_prsnl_inc_weekly,aes(x=Median_tot_prsnl_inc_weekly))+
+  geom_histogram()+
+  labs(x="Median total personal weekly income($)")+
+  ggtitle("Distribution of median total personal weekly income in NSW")
+```
+
+```{r}
+in1 <- ggplot(G02_data_mid_prsnl_inc_weekly_electorate,aes(x=Median_tot_prsnl_inc_weekly))+
+  geom_histogram()+
+  labs(x="Median total personal weekly income($)")+
+  ggtitle("Distribution of median total personal weekly income in Wentworth ")
+```
+
+```{r, results='hold'}
+plot_grid(in1,in2, ncol = 1)
+
+fivenum(G02_data_mid_prsnl_inc_weekly_electorate$Median_tot_prsnl_inc_weekly)
+fivenum(G02_data_mid_prsnl_inc_weekly$Median_tot_prsnl_inc_weekly)
+
+```
+
+### Comparing Distribution of Median personal weekly income in Wentworth vs NSW
+    * The average Median personal weekly income of Wentworth's voters of higher that the average of whole NSW voters
+    * On average, the mean in Wentwoth is around is just above $1535 per week. wheereas, NSW in general has an average of just above  \$800 per week.
+
+```{r, include=FALSE}
+remove(a1)
+remove(a2)
+remove(g1)
+remove(g2)
+remove(Age_Gender_data_electorate_voters)
+remove(Age_Gender_data_state_voters)
+remove(elected_data)
+remove(election_map_data)
+remove(in1)
+remove(in2)
+
+```
+
+> iv)
+
+    * The variables chosen from the G02 and SA1 data are Median Weekly Rent and median mortgage paid monthly 
+    * These are taken because there is cost of living crisis in Wentworth. The independent candiate's campain promise was to addressing the cost of living crisis [Allegra Spender](https://www.abc.net.au/news/elections/federal/2022/guide/went)
+    * And to see whether there is a correlation between them 
+
+```{r}
+
+G02_location <- here::here("data/G02_NSW_GDA2020.gpkg")
+
+(G02_layers <- st_layers(G02_location))
+
+
+G02_data <- st_read(G02_location,layer = "G02_SA1_2021_NSW")
+
+remove(G02_layers)
+```
+
+```{r}
+
+G02_data <- G02_data|>
+  mutate(
+    centeroid = st_centroid(geom))
+      
+colnames(G02_data)
+G02_data_mid_rent_weekly <- G02_data|>filter(!Median_rent_weekly == 0)|>select(c("SA1_CODE_2021","Median_rent_weekly","geom","centeroid"))
+
+G02_data_mid_rent_weekly_electorate <- G02_data_mid_rent_weekly |>
+  filter(SA1_CODE_2021 %in% interseted_SA1_ID$SA1_CODE_2021)
+
+```
+
+```{r}
+ggplot()+
+  geom_sf(data = G02_data_mid_rent_weekly_electorate,aes(geometry = geom),alpha = 0.5, color = "gray", size = 0.1 )+
+  geom_sf(data= electorate,aes(geometry = geometry), color= "red", size = 10,fill = "transparent" )+
+  geom_sf(data = G02_data_mid_rent_weekly_electorate,aes(geometry = centeroid, color = Median_rent_weekly ),shape = 20)+
+  scale_color_viridis_c(name = "Median weekly\nRent", option = "magma",direction = -1)
+
+```
+
+* In First look, the median rent is spread below 1000$ per week except for some coastal region.
+* two compare this with the other electorate we create box plot for both
+    
+
+```{r}
+G02_data_mid_rent_weekly_other_electorate <- G02_data_mid_rent_weekly |>
+  filter(! (SA1_CODE_2021 %in% interseted_SA1_ID$SA1_CODE_2021))
+```
+
+```{r}
+bp1 <-  ggplot()+
+  geom_boxplot(data = G02_data_mid_rent_weekly_electorate,aes(y=Median_rent_weekly), width = 1)+
+  labs(y="Median rent in Wentworth")
+bp2 <-  ggplot()+
+  geom_boxplot(data = G02_data_mid_rent_weekly_other_electorate,aes(y=Median_rent_weekly), width = 1)+
+  labs(y="Median rent in NSW except Wentworth")
+
+```
+
+```{r, results='hold'}
+plot_grid(bp1,bp2, nrow = 1)
+
+fivenum(G02_data_mid_rent_weekly_electorate$Median_rent_weekly)
+fivenum(G02_data_mid_rent_weekly_other_electorate$Median_rent_weekly)
+
+```
+### Comparing both the Boxplots 
+  * Median rent in Wentworth is high then the other parts of NSW
+  * On average, the median rent in Wentworth is around $690 per week which is higher than other parts. On average, 75% voters living in NSW except for Wentworth pays 550\$ per week.
+
+
+```{r}
+G02_data_mortgage_monthly <- G02_data|>filter(!Median_mortgage_repay_monthly == 0)|>select(c("SA1_CODE_2021","Median_mortgage_repay_monthly","geom","centeroid"))
+
+G02_data_mid_mortgage_monthly_electorate <- G02_data_mortgage_monthly |>
+  filter(SA1_CODE_2021 %in% interseted_SA1_ID$SA1_CODE_2021)
+
+```
+
+```{r}
+
+ggplot()+
+  geom_sf(data = G02_data_mid_mortgage_monthly_electorate,aes(geometry = geom),alpha = 0.5, color = "gray", size = 0.1 )+
+  geom_sf(data= electorate,aes(geometry = geometry), color= "red", size = 10,fill = "transparent" )+
+  geom_sf(data = G02_data_mid_mortgage_monthly_electorate ,aes(geometry = centeroid, color = Median_mortgage_repay_monthly ),shape = 20)+
+  scale_color_viridis_c(name = " Median mortgage\npaid monthly", option = "inferno",direction = -1)
+```
+
+
+```{r}
+G02_data_mid_mortgage_monthly_other_electorate <- G02_data_mortgage_monthly |>
+  filter(! (SA1_CODE_2021 %in% interseted_SA1_ID$SA1_CODE_2021))
+```
+
+```{r}
+bp3 <-  ggplot()+
+  geom_boxplot(data = G02_data_mid_mortgage_monthly_electorate ,aes(y=Median_mortgage_repay_monthly), width = 1)+
+  labs(y="Median mortgage payment in Wentworth")
+bp4 <-  ggplot()+
+  geom_boxplot(data =  G02_data_mid_mortgage_monthly_other_electorate ,aes(y=Median_mortgage_repay_monthly), width = 1)+
+  labs(y="Median mortgage payment in NSW except Wentworth")
+
+```
+
+```{r, results='hold'}
+
+plot_grid(bp3,bp4, nrow = 1)
+
+fivenum(G02_data_mid_mortgage_monthly_electorate$Median_mortgage_repay_monthly)
+fivenum(G02_data_mid_mortgage_monthly_other_electorate$Median_mortgage_repay_monthly)
+
+```
+
+### Comparing the Median mortage payment 
+    * On average, the Wentworth voter's median mortgage payment is 3600 per month. which is higher that what is paid by the 75% voters in NSW except for Wentworth
+    * it also seems like the maximum median mortgage is set to "9999" to avoid using this data for  illegal activity.   
+
+```{r, include=FALSE}
+#done with this set of data so lets clean some space
+remove(bp1)
+remove(bp2)
+remove(bp3)
+remove(bp4)
+remove(G02_data)
+remove(G02_data_mid_mortgage_monthly_electorate)
+remove(G02_data_mid_prsnl_inc_weekly_electorate)
+remove(G02_data_mid_rent_weekly)
+remove(G02_data_mid_rent_weekly_electorate)
+remove(G02_data_mid_mortgage_monthly_other_electorate)
+remove(G02_location)
+remove(G02_data_mid_prsnl_inc_weekly)
+remove(G02_data_mortgage_monthly)
+remove(G02_data_mid_rent_weekly_other_electorate)
+```
+
+> v)
+
+```{r}
+
+NSW_Referendums_Results <- read.csv("https://results.aec.gov.au/29581/Website/Downloads/ReferendumPollingPlaceResultsByStateDownload-29581-NSW.csv",skip =1)
+
+colnames(NSW_Referendums_Results)
+electorate_referendums_results <- NSW_Referendums_Results|>filter(DivisionName == "Wentworth")
+
+```
+
+
+```{r}
+sum_of_yes_votes <- sum(electorate_referendums_results$YesVotes)
+sum_of_no_votes <- sum(electorate_referendums_results$NoVotes)
+sum_of_Informal_votes <- sum(electorate_referendums_results$InformalVotes)
+
+percentage_of_yes_votes <- 100*(sum_of_yes_votes/(sum_of_yes_votes+sum_of_no_votes))
+
+percentage_of_informal_votes <- 100*(sum_of_Informal_votes/(sum_of_yes_votes+sum_of_no_votes+sum_of_Informal_votes))
+```
+
+**Percentage of yes votes for the referendums is (%):**
+```{r, results='hold'}
+
+percentage_of_yes_votes
+
+```
+
+* the variables to detemine the percentage of Indigenous and Torres Strait Islanders in my electorate are **G01(Selected person characteristics by sex) and G07(Indigenous status by age by sex)**.
+
+* **Australian Statistical Geography Standard (ASGS): Volume 2 - Indigenous Structure, July 2016**[link](https://www.abs.gov.au/ausstats/abs@.nsf/Lookup/by%20Subject/1270.0.55.002~July%202016~Main%20Features~Indigenous%20Locations%20(ILOC)~6)
+
+      + There are no SA1 regions in both the packages because Indigenous and Torres Strait Islanders are communities with a minimum population of 90 Aboriginal and Torres Strait Islander usual residents
+      + An Indigenous Location is an area designed to allow the production and analysis of statistics relating to Aboriginal and Torres Strait Islander Peoples with a high level of spatial accuracy, while also maintaining the confidentiality of individuals.
+
+> vi)
+
+    * No, the chosen electorate does not well represent the population of state broader.
+        + From all the results of analysis, we can clearly see it is different from the other electorate in New South Wales. (Note; except for age and gender distribution. Inother words the lifestyle represented in Wentworth is different from NSW)
+        + Inorder to represent the NSW every one must have equal chance of picking and here we focus only Wentworth.
+        + Still it is in the population of NSW. However, does not reflect the state of NSW 
+        
+## Citiation
+
+Pebesma, E., 2018. Simple Features for R: Standardized Support for Spatial
+  Vector Data. The R Journal 10 (1), 439-446,
+  <https://doi.org/10.32614/RJ-2018-009>.
+  
+Wickham H, Averick M, Bryan J, Chang W, McGowan LD, François R, Grolemund G,
+  Hayes A, Henry L, Hester J, Kuhn M, Pedersen TL, Miller E, Bache SM, Müller
+  K, Ooms J, Robinson D, Seidel DP, Spinu V, Takahashi K, Vaughan D, Wilke C,
+  Woo K, Yutani H (2019). “Welcome to the tidyverse.” _Journal of Open Source
+  Software_, *4*(43), 1686. doi:10.21105/joss.01686
+  <https://doi.org/10.21105/joss.01686>.
+H. Wickham. ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag New
+  York, 2016.
+
+Wickham H, François R, Henry L, Müller K, Vaughan D (2023). _dplyr: A Grammar
+  of Data Manipulation_. R package version 1.1.4,
+  <https://CRAN.R-project.org/package=dplyr>.
+  
+Müller K (2020). _here: A Simpler Way to Find Your Files_. R package version
+  1.0.1, <https://CRAN.R-project.org/package=here>.
+
+Wickham H (2023). _stringr: Simple, Consistent Wrappers for Common String
+  Operations_. R package version 1.5.1,
+  <https://CRAN.R-project.org/package=stringr>.
+  
+Wilke C (2024). _cowplot: Streamlined Plot Theme and Plot Annotations for
+  'ggplot2'_. R package version 1.1.3,
+  <https://CRAN.R-project.org/package=cowplot>.
+  
+Main Features - Indigenous Locations (ILOC). (2016). Abs.gov.au; c=AU; o=Commonwealth of Australia; ou=Australian Bureau of Statistics. <https://www.abs.gov.au/ausstats/abs@.nsf/Lookup/by%20Subject/1270.0.55.002~July%202016~Main%20Features~Indigenous%20Locations%20(ILOC)~6>.
+
+
+
